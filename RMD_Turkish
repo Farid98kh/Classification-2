@@ -1,0 +1,1065 @@
+---
+title: "Denetimli İstatistiksel Öğrenme Finali"
+author: "Farid KHORSHIDI"
+date: "2023-11-30"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    fig_caption: yes
+    df_print: kable
+    highlight: tango
+header-includes:
+  - "\\usepackage{fontspec}"
+  - "\\setmainfont{Times New Roman}"
+  - "\\renewcommand{\\normalsize}{\\fontsize{10}{12}\\selectfont}" 
+  - "\\usepackage{hyperref}"
+  - "\\hypersetup{pdfpagelayout=SinglePage}"  
+  - "\\hypersetup{pdfstartview=FitH}"  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning = FALSE, message = FALSE, fig.align = 'center', out.width = "50%", out.height = "60%")
+
+```
+
+
+```{r Kütüphaneler, include=FALSE}
+# Kütüphaneler
+library(readr)
+library(caret)
+library(tidyverse)
+library(magrittr)
+library(olsrr)
+library(car)
+library(corrplot)
+library(ISLR)
+library(Hmisc)
+library(caret)
+library(performance)
+library(ROCR)
+library(dplyr)
+library(ModelMetrics)
+library(lmtest)
+library(moments)
+library(bestNormalize) # normalization 
+library(MASS)
+library(psych) 
+library(mvnTest) # perform multivariate normality test
+library(tree) # perform regression and decision tree
+library(randomForest) # perform random forest
+library(rpart)       # performing regression trees
+library(rpart.plot)  # plotting regression trees
+library(ipred)       # bagging
+library(klaR)
+library(e1071)
+library(gridExtra)
+library(ggalt)
+#install.packages("ROCR")
+library(ROCR)
+library(MVN)
+library(ggplot2)
+library(mice)
+library(RColorBrewer)
+```
+
+# Veri Seti
+**Bu Veri Setinde Makine Öğrenmesi modellemeleriyle Deniz Kulağının üzerindeki `Rings` veya Halka mikatarının farkllı gözlemlerde Tahmin edilmesi amaçlamaktadır. Halka sayısının ilgilenilen Deniz Kulağı gözleminde 1.5 katı onun yaşını gösterdiğini belirtmek isterim, o yüzden bu çalışma Yaş(Age) Tahminlemesi olarak incelenecektir **
+
+
+```{r echo=FALSE}
+abalone_veriseti <- read_csv("G:/Yuksek Lisans/denetimli istatistiksel ogrenme/2. kez/final/abalone_veriseti.data", 
+                             col_names = FALSE)
+variable_names <- c("Sex",	"Length",	"Diameter",	"Height",	"Whole.weight",	"Shucked.weight",	"Viscera.weight",	"Shell.weight",	"Rings")
+colnames(abalone_veriseti) <- variable_names
+
+df <- abalone_veriseti
+df$Sex <- as.factor(df$Sex)
+df <- as.data.frame(df)
+head(df)
+```
+
+
+
+```{r}
+for(i in 1:9){
+  print(paste(names(df[i]),sep = "", "----class:" ,class(df[,i])))
+}
+```
+
+```{r echo=FALSE}
+dim(df)
+```
+*4177 tane farkli gözlemden toplanmiş veriler incelenecektir.*
+
+# A - REGRESYON
+
+**Değişkenler** 
+
+1. Cinsiyet: nominal / Kategorik / E, K ve B (bebek)
+2. Uzunluk: sürekli / mm / En uzun kabuk ölçümü
+3. Çap: sürekli / mm / uzunluğa dik
+4. Yükseklik: sürekli / mm / kabuklu et ile
+5. Tam ağırlık: sürekli / gram / bütün denizkulağının ağırlığı
+6. Sıkılmış ağırlık: sürekli / gram / et ağırlığı
+7. İç organ ağırlığı: sürekli / gram / bağırsak ağırlığı (kanama sonrası)
+8. Kabuk ağırlığı: sürekli / gram / kurutulduktan sonra
+9. Halkalar: tamsayı / -- / +1,5 yıl cinsinden yaşı verir
+
+
+Daha analize başlamadan `Length`le `Height` veya `Whole.weight` le `Shucked.weight` gibi değişkenlerin açıklamasında gösterildiği gibi aynı ölçümde ve birbirini etkileyeceğini düşündüğümüz konseptde oldukları için birbiriyle güçlü ilişkide oldukları ve çoklu bağlantı problemiyle modellemede karşılaşa bileceğimizi öngörebiliriz.
+```{r include=FALSE}
+md.pattern(Carseats)
+sum(is.na(df))
+```
+
+
+```{r echo=FALSE}
+smpl_size <- floor(0.7 * nrow(df))
+set.seed(191)
+train_id <- sample(1:nrow(df), size = smpl_size)
+train <- df[train_id,]
+test <- df[-train_id,]
+```
+
+## Tanımlayıcı İstatistikler
+### Özet İstatistikler
+```{r echo=FALSE}
+summary(train)
+```
+### Sayısal Değişkenlerin Standart Sapmaları
+```{r echo=FALSE}
+apply(train[,2:9],2, sd)
+```
+ilk bakışta bütün sayısal değişkenlerin özellikle hedef değişken yani Rings, aralık ve rangelerine nispeten mean ile medianları bir birine çok yakın olduklarını gözlemliyoruz.
+Ortalamadan 2 Standart Sapma uzaklığında yüzde 95 üzeri verilerimizin olduğunu bilerek; Length, Height, Shucked.weight,  Viscera.weight, Shell.weight, Rings değişkeninin de minimum ve maksimum değerlerini her ikisi veya biri bu aralığın çok dışında kaldığından ilerideki analizlerde bunlarda *`Outlier`* görebiliriz.
+
+### Sayısal Değişkenlerin Çarpıklıkları
+```{r echo=FALSE}
+apply(train[,2:9],2, skewness)
+```
+1. *Length* : aralığı 0.75 ve sola çarpıktır.
+2. *Diameter* : aralığı 0.6 ve sola çarpıktır.
+3. *Height* : aralığı 1.13 ve sağa çarpıktır.
+4. *Whole.weight* : aralığı 2.8 ve çok az sağa çarpıktır.
+5. *Shucked.weight* : aralığı 1.4 ve sağa çarpıktır.
+6. *Viscera.weight* : aralığı 0.76 ve sağa çarpıktır.
+7. *Shell.weight* : aralığı 1 ve sağa çarpıktır.
+8. *Rings* : aralığı 28 ve sağa çarpıktır.
+Toplamda değişkenler Ring dışında yakın aralıklar yanlız farklı birimlerden(Uzunluk, ağırlık ve yaş) oluşmaktadırlar.
+
+Ring veya hedef değişkeni Değişkeni integer ve 28 düzeyden oluştuğu ve özet istatistiklerde kategorik davrandığı için açıkca kategorik bir değişken olarak incelenebileceği ortadadır. yani sınıflandırma problemi olarak ele alınacağı daha uygun bir analiz olur.
+```{r echo=FALSE}
+nlevels(as.factor(df$Rings))
+```
+### Sayısal değişkenlerin Boxplot grafikleri
+```{r echo=FALSE, out.height="60%",out.width="60%"}
+my_pallete <- brewer.pal(n=8, name = "Pastel2")
+par(mfrow= c(2,4))
+for(i in 2:9){
+  
+  boxplot(train[,i], main = names(train)[i], col = my_pallete[i])
+}
+```
+\textcolor{blue}{Sayısal değişkenlerin Boxplot grafiklerinden median ve quartile lar çizgisine bakarak da özet istatistiklerdeki ifadeleri tsepit edebiliriz, örneğin değişkenlerin normal veya normale yakın dağıldıkları ve daha önce de söylediğimiz bazı değişkenlerde uç değer barındırdıklarına ilişkin yorumda bulunabiliriz.}
+
+
+### Kategorik değişkenlerin Boxplot grafikleri
+```{r echo=FALSE, out.height="60%",out.width="60%"}
+indexes = sapply(train, is.factor)
+indexes["Rings"] = TRUE
+train[,indexes]%>%
+  gather(-Rings, key = "var", value = "value") %>% 
+  ggplot(aes(x = value, y = Rings, color = value)) +
+  geom_boxplot() +
+  facet_wrap(~ var, scales = "free")+
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.85),legend.position="none")
+```
+- \textcolor{blue}{Kategorik değişken olarak Cinsiyet etkisini Bağımlı değişken üzerinde daha sağlıklı analiz edebilmek için boxplotına bakıldığında `Sex` değişkeninin seviyelerinin hepsi Rings değişkeninin normal dağıldığını ve mean ile medianının hepsinde 7.5 ile 10 arasında olduğunu gösterirken, sadece Infant seviyesi diğerleri 10 iken yaklaşık 8 olmuştur.}
+
+- \textcolor{blue}{veri yapısına göre herhangi bir seviye birleştirme anlamsız ve bilgi kaybıdır, modelde buna kesin karar verilecektir.}
+
+### Matris Plot ve Korelasyon Analizi
+```{r echo=FALSE, message=FALSE, warning=FALSE , out.height="90%",out.width="90%"}
+par(mfrow=c(1,1))
+cor.data <- cor(train[2:9])
+cor.data
+corrplot.mixed(cor.data, upper = "pie", tl.cex=0.58)
+pairs.panels(train[2:9], main="Scatter Plotlar ve histogramlar")
+```
+
+**Plotlar ve Korelasyon Matrisi İncelendiğinde**
+- Daha önce de öngördüğümüz Korelasyon matrisinden değişkenler hepsinin arasında çok fazla güçlü ve extra kuvvetli pozitif ilişki olduğunu ve dolayısıyla çoklu bağlantıya **duyarlı** Doğrusal regresyon ve Lojistik regresyon modellemelerinde *\textcolor{red}{olağan üstü multicollinearity}* ve yanlılık problemiyle karşılaşacağımız anlaşılmaktadır.
+- bağımsız değişkenlerin arasındaki ilişkinin onların bağımlı değişkenle aralarındak ilişkiden fazla olması dikkat çekiyor.
+- Bağımlı değişkenle en çok ilişkisi olan değişken `Shell.weight` dir bu da karar ağaçları gibi algoritmalarda ilerleyen analizlerde en etkin olacağı kök düğüm olabilmesi anlamına gelir.
+- Buradan ileride ilgili model için güçlü ilişkili değişkenlerin Çoklu Bağlantı kurdukları için bazısını çıkarmak veya **Temel Bileşenler Analizi** ile boyut indirgemesi yapılabileceği yorumunu çıkardık.
+
+**İstatistiksel Hipotez Testleri veya Varsayım Kontrolü %95 güvenle bu iki yol izlenerek tespit edilir**  
+*Eğer p_value > 0.05 null hipotez reddedilemez*  
+*Eğer p_value < 0.05 null hipotez reddedilir*
+
+## Bağımlı Değişkenin Normallik Testi
+*\textcolor{red}{Ho : Rings değişkeni normal dağılmıştır.}*  
+*\textcolor{red}{Ha : Rings değişkeni normal dağılmamaktadır.}*
+
+- *Uygun Durum* : p_value > 0.05
+```{r echo=FALSE}
+shapiro.test(train$Rings)
+```
+
+```{r echo=FALSE}
+outliers <- which(abs(scale(log(df$Rings)))>3)
+shapiro.test(scale(log(df$Rings[-outliers])))
+```
+Bağımlı değişken 0.95 güvenle normal dağılmamaktadır.  
+Bağımlı değişkenin standartlaştırılmış logaritmik dönüşümünden aykırı değerler çıkarıldıktan sonra da normallik sağlanamamıştır.
+Böylelikle doğrusal regresyonda artıkların normal dağıldığı varsayımını engelleyen durum vardır.
+
+
+## 1 - Doğrusal Regresyon
+
+```{r echo=FALSE}
+LR <- lm(log(Rings) ~ Sex + Length + Diameter + Height + Whole.weight + Shucked.weight + Viscera.weight + Shell.weight,data = train)
+summary(LR)
+```
+*\textcolor{red}{İlk başta Full Modeli kurdum ve sadece SexM değişkeni anlamsız çıktı}*  
+çoklu bağlantı problemi ni kaldırmak için
+Düzeltilmiş R-kare ile R-kare oldukça birbirine yakın çıkmış, model ve içindeki bağımsız değişkenler iyi bir şekilde Satış değişkeninin varyansının **%87.5**si nı açıklamıştır.
+
+### Model Varsayımları
+#### Model Geçerliliği F Hipotez Testi  
+*\textcolor{red}{Ho : Bağımlı değişken ve bağımsız değişkenler arasında doğrusal bir ilişki bulunmamaktadır.}*  
+*\textcolor{red}{Ha : Bağımlı değişken ile en az bir bağımsız değişken arasında doğrusal bir ilişki bulunmaktadır.}*  
+
+- *Uygun Durum* : Ha: p_value < 0.05  
+F istatistik değeri 474.3 payda 9 ve paydada 2913 Serbestlik derecesiyle 0.05 önem düzeyinde Ho reddedilmiştir ve model anlamlı çıkmıştır ve bağımlı değişken ile en az bir bağımsız değişken arasında doğrusal bir ilişki bulunmaktadır.  
+
+#### Model Katsayılarının Anlamlılığına İlişkin Hipotez Testi
+*\textcolor{red}{Ho : katsayı 0'dan önemli ölçüde farklı değildir.}*  
+*\textcolor{red}{Ha : katsayı 0'dan önemli ölçüde farklıdır.}*  
+
+- *Uygun Durum* : Ha: p_value < 0.05  
+1. `SexM` katsayısında 0.05 önem düzeyinde anlamsız çıkmıştır ve *0'dan önemli ölçüde farklıdır* varsayımı reddedilmiştir.
+2. Diğer değişkenlerin katsayıları %95 güvenle anlamlıdır
+
+### Standarlaştırılmış artıklar  
+Artıkların yayıldığının bir ölçüsü olan Residual standard error, modelin tahmin ettiği değerlerden gözlemlenen Rings değerlerinin ortalama sapmasını, tane train verisinden 2913 serbestlik derecesiyle iyi bir miktar olarak 0.2026 göstermektedir, ayrıca artıklar `-1.39` ve `0.80` arasında değişmektedirler.
+
+
+- VIF değerleri incelendiğinde daha önce aynı konseptten boy ve ağırlık olarak veri tanıtımında ve korelasyon analizinde \textcolor{red}{Length, Diameter ve Height değişkenleri} bir birleri ile ve \textcolor{red}{Whole.weight, Shucked.weight, Viscera.weight ve Shell.weight değişkenleri} bir birleri ile ilişkili olacaklarını vıf (full model)de de bu **Multicollinearity** sorununu saptadık.
+- korelasyon matrisinden ilerleyerek diğer bağımsız değişkenlerle en az ve bağımlı değişkenle de en çok ilişkisi olan değişkenleri son modele koymaya karar verdik.
+- anlamsız değişkeni modelden çıkarttık.
+
+```{r echo=FALSE}
+LR <- lm(log(Rings) ~  Height + Shucked.weight + Shell.weight,data = train)
+a <- summary(LR)
+a$call
+paste (round(a$adj.r.squared,3), "Adjusted R squared")
+
+```
+Rings in varyansının açıklanabileceği çok da full model ile fark açmamıştır.
+
+### VIF 
+
+```{r echo=FALSE}
+vif(LR)
+```
+
+*\textcolor{red}{GVIF < 5 veya 10 gereksinimi sağlanmıştır ve çoklu bağlantılık problemi yoktur.}*
+
+### Varsayımlar
+#### Hataların Normalliği
+
+*\textcolor{red}{Ho: Hatalar Normal dağılmaktadır.}*
+*\textcolor{red}{Ha: Hatalar Normal dağılmamaktadır.}*
+
+**Shapiro Wilk Testi**  
+- *Uygun Durum* Ho: p_value > 0.05
+```{r echo=FALSE}
+shapiro.test(LR$residuals)
+```
+Hatalar p_value: < 2.2e-16 olarak beklendiği gibi **logaritmik bağımlı değişken** normal dağılmamaktadır.
+- Aykırı değerler çıkarılsada, scale ve bir çok dönüşüm yapılsa da bağımlı değişkenin olağan üstü normal dağılmaması bu varsayımı bozmaktadır.
+
+#### Hataların Sabit ve Homojen Varyanslılığı
+
+*\textcolor{red}{Ho: Hatalar Sabit Varyanslıdır.}*
+*\textcolor{red}{Ha: Hatalar Sabit Varyanslı değildir.}*
+
+**Breusch-Pagan Testi**
+- *Uygun Durum* Ho: p_value > 0.05
+
+```{r echo=FALSE}
+bptest(log(Rings) ~ Height + Shucked.weight + Shell.weight, data=train)
+```
+Hatalar p_value: < 2.2e-16 olarak beklendiği gibi sabit ve homojen varyanslı değildir.
+
+
+\begin{center}\textcolor{blue}{Doğrusal Regresyon modelinde Hedef değişkeninin varyansının açıklanması dönüşümle bile 0.60 gibi az olması ve Normal dağılmaması dolayısıyla da Artıkların da Normal dağılmaması bu veri seti için yetersiz kaldığının kanıtıdır ve herhangi bir tahmin ve devamında ölçüm metriklerinin hesaplanması yanlış olacağı için bu algoritma ile devam edilmeyecek.}\end{center}
+
+
+## Regresyon Ağaçları
+
+```{r echo=FALSE}
+set.seed(191)
+treeRings <- tree(Rings~., data = train)
+summary(treeRings)
+
+```
+- Ağaçta Shell.weight ve Shucked.weight değişkenlerinin verileri tahmine doğru yönelteceği saptanmıştır.
+- Bütün fit miktarlarının gerçek miktarlardan sapması 15900 bölü serbestlik derecesi 2914 ten artıkların ortalama sapması 5.487 çıkmıştır.
+
+```{r echo=FALSE, out.height="50%",out.width="70%"}
+
+plot(treeRings)
+text(treeRings, pretty = 0,
+     cex=0.7, col = "blue",
+     pos= 3,
+     offset= 0.5)
+```
+- Beklediğimiz gibi Shell.weight en önemli verileri ayırt eden düğüm yani kök düğüm çıkmıştır.
+Düğümlerde değişkene gelen gözlem birimleri düğümde belirtilen miktarlardan az olan veri sol tarafa(**Left Branch**) ayırtıldığını görüyoruz.
+- Terminal düğümlerde Ring in hangi ağaç dalında hangi değerler tahmin edildiğini görmekteyiz.
+
+### train Hata karelerinin ortalama kare kökü
+```{r echo=FALSE}
+treeRings.pred <- predict(treeRings, train)
+
+RMSE(treeRings.pred, train$Rings)
+```
+
+### test Hata karelerinin ortalama kare kökü
+
+```{r echo=FALSE}
+treeRings.predtest <- predict(treeRings, test)
+
+RMSE(treeRings.predtest, test$Rings)
+
+```
+
+### rpart paketi ile
+bu paketin özelliği cross validationını da kendisinin yapıp en az hatanın olduğu budanmış ağacı otomatik olarak oluşturmasıdır, ama model karmaşıklığına dikkate almaz. O yüzden train ve test hatası hesaplanmamıştır.
+
+```{r echo=FALSE}
+treeRings2 <- rpart(Rings ~ ., data=train)
+treeRings2$variable.importance
+```
+
+```{r echo=FALSE, out.height="50%",out.width="50%"}
+par(xpd = TRUE)
+rpart.plot(treeRings2)
+```
+değişkenlerin önemi sıralandığında en önemli değişken Shell.weight olarak dikkat çekiyor.
+
+ağacı incelediğimizde kök düğüm olarak yine Shell.weight olması dikkat çekiyor
+toplam 9 adet terminal node bulunuyor. her bir atamayı farklı renklere ayırararak göstermiş. renklerin tonu ise içerdiği gözlem miktarını işaret ediyor.
+Örneğin en açık renkle gösterilen soldan ikinci terminal node gözlemlerin %23 ü bu node da Ring miktarı 8.3 olarak tahmin edilmiştir.
+
+### BUDAMA
+```{r echo=FALSE}
+cv_tree <- cv.tree(treeRings)
+plot(cv_tree$size,cv_tree$dev,type='b')
+```
+en uygun ağaç sayısı 5 olmaktadır ondan sonra tahmin sapmasında hafif azalış var.
+```{r echo=FALSE, out.height="50%",out.width="50%"}
+prune_tree=prune.tree(treeRings,best=5)
+summary(prune_tree)
+plot(prune_tree)
+text(prune_tree, pretty = 0,
+     cex=0.7, col = "blue",
+     pos= 3,
+     offset= 0.5)
+partition.tree(prune_tree)
+```
+mean deviance full ağaca göre biraz artmış ama karmaşıklık azalmış ve çıktılar tree plot ve kısmi ağaç plotından verilerin dağılım yoğunluğu ve tahmin değerlerine ilişkin daha yorumlanabilir şekle gelmiştir.
+
+```{r echo=FALSE}
+prune_tree.pred <- predict(prune_tree, train)
+
+RMSE(prune_tree.pred, train$Rings)
+```
+train hata karelerinin ortalama kare kökü
+```{r echo=FALSE}
+prune_tree.predtest <- predict(prune_tree, test)
+
+RMSE(prune_tree.predtest, test$Rings)
+```
+test hata karelerinin ortalama kare kökü
+
+## 3 - Bagging Regresyon
+
+
+```{r echo=FALSE, out.height="50%",out.width="60%"}
+set.seed(191)
+bag_reg<-randomForest(Rings~.,data=train,mtry=8,importance=TRUE)
+bag_reg.pred<-predict(bag_reg,newdata=test)
+RMSE(bag_reg.pred, test$Rings)
+
+bag_reg$importance
+varImpPlot(bag_reg)
+```
+Shell.weıght ve Shucked.weight burada da en önemli değişkenler oldukları gösterilmiştir.
+
+
+## 4 - RANDOM FOREST
+
+```{r echo=FALSE, out.height="50%",out.width="60%"}
+set.seed(191)
+RF_R<-randomForest(Rings~.,data=train,mtry=3,importance=TRUE)
+RF_R_pred <-predict(RF_R,newdata=test)
+plot(RF_R_pred,test$Rings) 
+RMSE(RF_R_pred, test$Rings)
+RF_R$importance
+varImpPlot(RF_R)
+
+```
+
+
+Shell.weıght ve Shucked.weight burada da önemli değişkenler olduklarıyla birlikte Sex ve Whole.weıght değişkenlerin en önemli oldukları dikkat çekiyor.
+
+## 5 - Test verisi üzerinde performans karşılaştırmaası
+
+- **Random** Forest 2.161193 rmse, bagging 2.199719 rmse, regresyon agaci 2.571849 ve varsayimları sağlanamayan doğrusal regresyon yöntemleri sırasıyla budanmış modelleri ile en iyi test hatalarını vermektedirler.
+
+# B - SINIFLANDIRMA
+
+Yanıt değişkenini Sex ="Infant" baz alarak en uygun eşik değer Rings ve Sex="Infant" değişkenlerinin Rings in Yoğunluğunu gösterecek şekilde violon plotı ile gözlemlediğimiz Rings in yüksek değerlerine 1 ve düşük değerlerine 0 diyerek 4177 gözlem olduğuna rağmen çok da fazla outlier i barındırmadığını boxplotlada da gördümüz için istatistik metriklerinden mean veya median çok fazla farklı olduklarını düşünmediğim için her iki durum için eşik değeri hesaplanmıştır.
+```{r echo=FALSE}
+ggplot(df[df$Sex == "I", ], aes(x = Sex, y = Rings)) +
+  geom_violin(fill = "lightblue", color = "blue", alpha = 0.5) +
+  labs(title = "Comparison of Rings for Infant", y = "Rings") +
+  theme_minimal()
+```
+
+```{r echo=FALSE}
+threshold_value <- mean(df$Rings[df$Sex == "I"])
+threshold_value <- median(df$Rings[df$Sex == "I"])
+```
+median la hesaplanan eşik değer 8 ve mean le hesaplanan 7.89 olmuştur. Rings 8 ve 8 den büyük değerler için 1 ve 8 den küçük değerler için 0 alacak şekilde kodlanacaktır
+```{r echo=FALSE}
+df$Rings <- ifelse(df$Sex == "I" & df$Rings < threshold_value, 0, 1)
+df$Rings <- as.factor(df$Rings)
+
+train$Rings <- ifelse(train$Sex == "I" & train$Rings < threshold_value, 0, 1)
+train$Rings <- as.factor(train$Rings)
+
+test$Rings <- ifelse(test$Sex == "I" & test$Rings < threshold_value, 0, 1)
+test$Rings <- as.factor(test$Rings)
+```
+
+
+
+## 6 - SINIFLANDIRMA AĞACI
+```{r echo=FALSE, out.height="50%",out.width="60%"}
+set.seed(191)
+treeRings <- tree(Rings~., train)
+summary(treeRings)
+plot(treeRings)
+text(treeRings, pretty = 0,
+     cex=0.8, col = "blue",
+     pos= 2,
+     offset= 0.5)
+```
+Ağaç Sex, Shell.weight ve Diameter değişkenleri ve Toplam 5 terminal node ile oluşmuştur.
+Kök düğüm olarak Sex saptanmıştır.
+Residual mean deviance 0.2253 olarak dikkat çekiyor.
+iç düğümlerde sağ tarafta Sex Infant kategorisinde olmayan verilerin Rings değeri 1 ve sol tarafta Shell.weight ve Diameter nodelarında değişiklik olmaması ve buralarda dallanmanın anlamı olmadığı için ağaç budaması şarttır.
+
+### Tahminler
+train için
+```{r echo=FALSE}
+treeRings.pred <- predict(treeRings,train,type = "class")
+a <- caret::confusionMatrix(treeRings.pred,train$Rings)
+a$overall[1]
+```
+test için
+```{r echo=FALSE}
+treeRings.predtest <- predict(treeRings, test,type = "class")
+a <- caret::confusionMatrix(treeRings.predtest,test$Rings)
+a$overall[1]
+```
+
+Cross Validation le uygun ağac siza karar vermek
+```{r echo=FALSE}
+set.seed(191)
+cv.treeRings <- cv.tree(treeRings,FUN = prune.misclass)
+plot(cv.treeRings$size ,cv.treeRings$dev ,type="b")
+```
+Her iki grafik de incelendiğinde size'ın 3 olduğu noktada deviance'de belirgin azalmalar dikkat çekmekte ve 4 veya 5 düğüme ihtiyaç yoktur.
+
+### Budama 
+
+```{r echo=FALSE}
+prune.treeRings <- prune.misclass (treeRings,best=3)
+summary(prune.treeRings)
+plot(prune.treeRings)
+text(prune.treeRings, pretty = 0,
+     cex=0.8, col = "blue",
+     pos= 2,
+     offset= 0.5)
+```
+Budama sonrası residual mean deviance'ının 0.265 olarak saptanmış. Biraz artış göstermiş görünüyor.
+Error rate ise 0.047 değerini almış. Misclassification error rate değişmemiştir.
+Yalnızca 3 terminal node olduğu için çok verimli bir ağaç olduğu söylenemez. 
+Ağaç yalnızca Sex ve Shell.weight değişkenleri kullanılarak oluşturulmuş.
+
+### Budanmış - Tahminler
+train için
+```{r}
+prunedtree.pred <- predict(prune.treeRings, train, type = "class")
+a <- caret::confusionMatrix(prunedtree.pred, train$Rings)
+a$overall[1]
+```
+
+test için
+```{r}
+prunedtree.predtest <- predict(prune.treeRings, test, type = "class")
+a <- caret::confusionMatrix(prunedtree.predtest, test$Rings)
+a$overall[1]
+```
+**rpart ile**
+```{r}
+treeRings2 <- rpart(Rings ~., data = train, method = "class")
+treeRings2$variable.importance
+rpart.plot::rpart.plot(treeRings2)
+```
+- burada da en önemli değişken Shell.weight olmuştur.
+Toplamda 3 terminal node bulunmakta verilerin dağılım yoğunluğunun yüzdelikleri gösterilmiş ve tahmin edilen miktar 0 veya 1 olarak sınıflandırılmıştır. 
+
+- aynı manuel budama yaptığımız ağaç çıktığı için Accuracy değerinin çok az fark edebileceğinden tahmin hata metriklerini hesaplamaya gerek duyulmamıştır.
+
+
+## 7 - Bagging
+
+```{r}
+set.seed(191)
+bag <- randomForest(Rings~., data = train, mtry = 8, importance=TRUE)
+
+varImpPlot(bag)
+```
+1. değişkenlerin önemlerini işaret eden grafik incelendiğinde mean decrease accuracy değerine göre önemli değişkenler: Sex, Shell.weight,, Lenght, Diameter, Viscera.weight
+2. düğüm saflığını işaret eden gini değerine göre önemli değişkenler: Shell.weight, Sex, Viscera.weight, Shucked.weight, Whole.weight ve Lenght olmuslardir.
+
+### Tahminler
+train icin
+```{r}
+bagging_pred <- predict(bag, train, type = "class")
+a <- caret::confusionMatrix(bagging_pred, train$Rings)
+a$overall[1]
+```
+test icin
+```{r}
+bagging_predtest <- predict(bag, test, type = "class")
+a <- caret::confusionMatrix(bagging_predtest, test$Rings)
+a$overall[1]
+```
+
+### ipred paketi ile
+
+- Modele kaç iterasyonun dahil edileceğini kontrol etmek için nbagg kullanılır 
+- coob = TRUE OOB hata oranını kullanmayı göstermektedir. 
+- tr control argümani ile 10-fold cross validation fonksiyonun içinde uygulanır
+```{r}
+set.seed(191)
+bag2 <-bagging(
+  formula = Rings~.,
+  data = train,
+  nbagg = 500,
+  coob=TRUE,
+  method="treebag",
+  trControl = trainControl(method = "cv", number = 10)
+)
+bag2$err
+
+```
+OOB Missclassification error rate 0.05987 olarak saptanmıştır.
+
+```{r}
+VI <- data.frame(var=names(train[,-9]), imp=varImp(bag2))
+
+VI_plot <- VI[order(VI$Overall, decreasing=F),]
+
+par(mar = c(5, 7, 2, 2))  # c(bottom, left, top, right)
+barplot(VI_plot$Overall,
+        names.arg=rownames(VI_plot),
+        horiz=T,
+        col="goldenrod1",
+        xlab="Variable Importance",
+        las = 2)
+```
+
+Değişkenlerin önemini ifade eden grafiği incelediğimizde bir önceki paketten daha farklı bir grafikle karşılaşılmıştır.
+shell.weight ve sex değişkenleri diğer pakette en önemli değişkenler olarak görünürken bu sefer shell.weight ve Whole.weight değişkenlerinin daha önemli olduğu fark edilmiştir.
+
+####Tahminler
+train icin
+```{r}
+bagging_pred2 <- predict(bag2 ,train ,type="class")
+a<- caret::confusionMatrix(bagging_pred2, train$Rings)
+a$overall[1]
+```
+test icin
+```{r}
+bagging_predtest2 <- predict(bag2 ,test ,type="class")
+a <- caret::confusionMatrix(bagging_predtest2, test$Rings)
+a$overall[1]
+```
+
+## 8 - RANDOM FOREST CLASSIFICATION
+```{r}
+set.seed(191)
+RF.C <- randomForest(Rings~., data = train, mtry=3, importance=TRUE)
+RF.C$confusion
+RF.C
+```
+Sıfırıncı sınıf için hata 0.16, birinci sınıf için ise 0.035 olarak saptanmış. Toplam 159 gözlem yanlış olarak sınıflandırılmış.
+
+OOB estimate error rate ise %5.44 çıkmış. Bunun az olduğu söylenilebilir.
+her bir ayrışmada 3 değişken denenmiş.
+Toplam 500 ağaç kurulmuş.
+```{r}
+varImpPlot(RF.C)
+```
+Değişkenlerin önemlerine bakıldığında;
+
+- Mean decrease accuracy incelendiğinde en çok Sex ve Shell.weight sıralaması dikkat çekmekte.
+- Gini değerlerine bakıldığında ise Shell.weight ve Sex sıralaması dikkat çekiyor
+
+- Baggin ile oldukça paralel olduğunu söylemek yanlış olmaz.
+### Tahminler
+train icin
+```{r}
+RF.C_pred.train <- predict(RF.C, train, type = "class")
+a <- caret::confusionMatrix(RF.C_pred.train, train$Rings)
+a$overall[1]
+```
+test icin
+```{r}
+RF.C_pred.test <- predict(RF.C, test, type = "class")
+a <- caret::confusionMatrix(RF.C_pred.test, test$Rings)
+a$overall[1]
+```
+### Grid Search ile
+Grid search'te ağaç sayısı aralığına karar vermek için grafik çizdirilmiştir.
+
+```{r}
+plot(RF.C)
+
+hyper_grid <- expand.grid(
+  mtry = c(2, 3, 4, 5),
+  nodesize = c(1, 3, 4, 5, 10), 
+  numtrees = c(200, 220,300,330,500),
+  rmse = NA                                               
+)
+
+for (i in 1:nrow(hyper_grid)) {
+  fit <- randomForest(Rings~. ,
+                      data=train, 
+                      mtry=hyper_grid$mtry[i],
+                      nodesize = hyper_grid$nodesize[i],
+                      ntree = hyper_grid$numtrees[i],
+                      importance=TRUE)
+  hyper_grid$rmse[i] <- mean(fit$confusion[,3])
+}
+
+
+hyper_grid %>%
+  arrange(rmse) %>%
+  head(10)
+```
+Böylelikle en iyi parametrelerle kurulacak model aşağıdaki gibi olmalıdır.
+```{r}
+RF.C2 <- randomForest(Rings~., data = train, mtry= 4, importance= TRUE, nodesize=10,ntree= 220)
+RF.C2$confusion
+
+RF.C2
+```
+Sıfırıncı sınıf için hata 0.15, birinci sınıf için ise 0.034 olarak saptanmış. Toplam 153 gözlem yanlış olarak sınıflandırılmış.
+ve bir öncekine göre iyileşme olmuştur.
+OOB estimate error rate ise %5.23 çıkmış. Bunun az olduğu söylenilebilir.
+her bir ayrışmada 4 değişken denenmiş.
+Toplam 220 ağaç kurulmuş.
+
+```{r}
+RF.C2$importance
+```
+
+```{r}
+varImpPlot(RF.C2)
+```
+aynı bir önceki gibi değişkenlerin önem sırası
+#### Tahminler
+train icin
+```{r echo=FALSE}
+RF.C2_pred.train <- predict(RF.C2, train, type = "class")
+a <- caret::confusionMatrix(RF.C2_pred.train, train$Rings)
+a$overall[1]
+```
+test icin
+```{r echo=FALSE}
+RF.C2_pred.test <- predict(RF.C2, test, type = "class")
+a <- caret::confusionMatrix(RF.C2_pred.test, test$Rings)
+a$overall[1]
+```
+
+## 9 - Logistic Regresyon
+
+Burada da aynı linear regresyon gibi vif a duyarlı algoritma olduğu için anlamsız ve çoklu bağlantılık problemi yaradan değişkenleri modelden kaldırdık ve son model aşağıdaki gibidir.
+```{r echo=FALSE}
+logmodel <- glm(Rings ~ Height + Shucked.weight + Shell.weight,data = train, family=binomial)
+summary(logmodel)
+paste (exp(21.9160),"kat odds oraninda degisiklik olur eger Height degiskeninde 1 birimlik artıs olursa.")
+paste (exp(-4.6829),"kat odds oraninda degisiklik olur eger Shucked.weight degiskeninde 1 birimlik artıs olursa.")
+paste (exp(31.6321),"kat odds oraninda degisiklik olur eger Shell.weight degiskeninde 1 birimlik artıs olursa.")
+```
+
+- modelin anlamlılığı
+
+𝐻 0 : 𝛽 1 = 𝛽 2 = ⋯ = 𝛽 𝑘 = 0
+𝐻 1 : En azından bir 𝛽 𝑗 ≠ 0
+G= Null deviance-Residual Deviance
+```{r}
+1-pchisq(2480.0 - 1113.5, 2922-2919) 
+```
+
+Bu p-değeri .05'ten küçük olduğu için sıfır hipotezini reddebiliriz. 
+Başka bir deyişle, bağımsız değişkenlerin bağımlı değişkeni açıklamada etkili olduğunu söyleyebilecek yeterli istatistiksel kanıtımız bulunmaktadır. 
+
+**Vif**
+```{r echo=FALSE}
+vif(logmodel)
+outlierTest(logmodel)
+```
+Bonferroni'ye göre herhangi bir uç değer bulunmamakta.
+```{r echo=FALSE}
+confint.default(logmodel)
+```
+
+β katsayısına ait güven aralığı sfır değerini içermediği için Ho hipotezi red edilerek aşağıdaki katsayıların istatistiksel olarak anlamlı olduğuna karar verilmiştir.
+Height, Shucked.weight, Shell.weight ve Whole.weight
+
+β katsayısına ait güven aralığı sfır değerini içerdiği için Ho hipotezi red edilemeyerek diger katsayıların istatistiksel olarak anlamlı olmadığına karar verilmiştir.
+
+
+odds değeri  için güven aralığı
+```{r echo=FALSE}
+odds.confint <- exp(confint.default(logmodel))
+odds.confint
+```
+Verininin logistic regresyon modeline fit edip edemediğini kontrol etmek
+için Hosmer-Lemeshow testini uyguluyorum.
+```{r echo=FALSE}
+library(performance)
+performance_hosmer(logmodel, n_bins = 10)
+```
+
+### Tahminler
+
+train icin
+```{r echo=FALSE}
+logmodel_pred = predict(logmodel, newdata=train)
+logmodel_pred <- ifelse(logmodel_pred > 0.5,1,0)
+a <- caret::confusionMatrix(as.factor(logmodel_pred), train$Rings)
+a$overall[1]
+```
+test icin
+```{r echo=FALSE}
+logmodel_predtest = predict(logmodel, newdata=test)
+logmodel_predtest <- ifelse(logmodel_predtest > 0.5,1,0)
+a <- caret::confusionMatrix(as.factor(logmodel_predtest), test$Rings)
+a$overall[1]
+```
+
+## 10-LDA
+```{r echo=FALSE}
+train_lda <- train[,c(2,3,4,5,6,7,8,9)]
+test_lda <- test[,c(2,3,4,5,6,7,8,9)]
+
+```
+
+```{r echo=FALSE}
+model_lda<-lda(Rings~.,data=train_lda)
+model_lda
+```
+Linear discriminant analysis modelinin çıktısı incelendiğinde:
+Yalnızca bir adet doğrusal ayrım olduğu saptanmıştır.
+Oranlar birbirine kabul edilebilir uzakliktadir.
+
+### Tahminler
+
+train icin
+```{r echo=FALSE}
+model_lda.pred <-predict(model_lda,train_lda)
+a <- caret::confusionMatrix(model_lda.pred$class, train_lda$Rings)
+a$overall[1]
+```
+test icin
+```{r echo=FALSE}
+model_lda.predtest <-predict(model_lda,test_lda)
+a <- caret::confusionMatrix(model_lda.predtest$class, test_lda$Rings)
+a$overall[1]
+```
+
+```{r echo=FALSE}
+hist_lda1<-ldahist(data=model_lda.pred$x[,1],g=train_lda$Rings) 
+```
+Birinci fonksiyona göre nasıl ayrılması gerektiğini gösteren karşılaştırmalı histogramlar incelendiğinde:
+- Yaklaşık olarak -2 değeriyle 0 değerleri arasında örtüşme görülmekte. 
+- Bu olası yanlış ayırmayı gösteriyor olabilir.
+
+### 11 - Quadratik Discriminant Analysis
+```{r echo=FALSE}
+set.seed(191)
+train_indices <- sample(2, size=nrow(df), replace = TRUE, prob=c(0.7,0.3))
+train_qda <- df[train_indices==1, ]
+test_qda <- df[train_indices==2, ]
+
+train_qda <- train_qda[,c(2,3,4,5,6,7,8,9)]
+test_qda <- test_qda[,c(2,3,4,5,6,7,8,9)]
+
+model_qda <- qda(Rings~., data=train_qda)
+model_qda
+```
+Bazı değişkenlerin olasılıkları arasındaki farkın bu denli düşük olması modelin güvenilirliğini sorgulatmaktadır.
+
+### Tahminler
+train icin
+```{r echo=FALSE}
+model_qda.pred <- predict(model_qda ,train_qda)
+a <- caret::confusionMatrix(model_qda.pred$class, train_qda$Rings)
+a$overall[1]
+```
+test icin
+```{r echo=FALSE}
+model_qda.predtest <- predict(model_qda ,test_qda)
+a <- caret::confusionMatrix(model_qda.predtest$class, test_qda$Rings)
+a$overall[1]
+```
+
+```{r echo=FALSE}
+dfmvn <- df[,c(2,3,4,5,6,7,8,9)]
+sifir <- df[df$Rings==0,c(2,3,4,5,6,7,8,9)]
+sifir <- sifir[,-8]
+
+bir <- df[df$Rings==1, c(2,3,4,5,6,7,8,9)]
+bir <- bir[,-8]
+
+
+result <- mvn(data = dfmvn, subset = "Rings", mvnTest = "hz")
+result$multivariateNormality
+```
+Henze - Zinkler normallik testine göre 0.05 anlamlılık düzeyinde Ho verilerin çoklu normal dağılımdan geldiği hipotezi reddedilebilir.
+
+```{r echo=FALSE}
+leveneTest(df$Length ~ df$Rings, df)
+
+leveneTest(df$Diameter ~ df$Rings, df) 
+
+leveneTest(df$Height ~ df$Rings, df) 
+
+leveneTest(df$Shucked.weight ~ df$Rings, df) 
+
+leveneTest(df$Shell.weight ~ df$Rings, df) 
+```
+Levene varyans homojenliği testine göre 0.05 anlamlılık düzeyinde Ho bütün değişkenler için sınıflara göre varyanslarının homojenliği olduğu hipotezini reddedilemediği ni görüyoruz. Yani değişkenlerin hepsinin varyansı homojendir.
+
+```{r echo=FALSE}
+
+library(heplots)
+boxm <- heplots::boxM(df[, c(2,3,4,5,6,7,8)], df$Rings) 
+boxm 
+
+par(mar = c(6, 5, 5, 6)+ 1)
+plot(boxm)
+```
+p-value 0.05'ten küçük çıktığı için 0.05 anlamlılık seviyesinde Ho bağımsız değişkenlerin kovaryans matrislerinin eşit olduğu varsayımı reddedilebilir.
+
+
+## 12
+
+```{r include=FALSE}
+predct <- prediction(as.numeric(as.vector(prunedtree.predtest)), test$Rings)
+
+predbag <- prediction(as.numeric(as.vector(bagging_predtest2)), test$Rings)
+
+predRF <- prediction(as.numeric(as.vector(RF.C2_pred.test)), test$Rings)
+
+predlog <- prediction(as.numeric(as.vector(logmodel_predtest)), test$Rings)
+
+predlda <- prediction(as.numeric(as.vector(model_lda.predtest$class)), test_lda$Rings)
+predqda <- prediction(as.numeric(as.vector(model_qda.predtest$class)), test_qda$Rings)
+
+
+```
+
+### AUC Değerleri
+```{r}
+aucct <-ROCR::performance(predct, measure="auc")
+paste(round(aucct@y.values[[1]],6), "CT AUC degeri")
+aucbag <-ROCR::performance(predbag, measure="auc")
+paste(round(aucbag@y.values[[1]],6), "Bagging AUC degeri")
+aucRF <-ROCR::performance(predRF, measure="auc")
+paste(round(aucRF@y.values[[1]],6), "RF AUC degeri")
+auclog <-ROCR::performance(predlog, measure="auc")
+paste(round(auclog@y.values[[1]],6), "Log AUC degeri")
+auclda <-ROCR::performance(predlda, measure="auc")
+paste(round(auclda@y.values[[1]],6), "LDA AUC degeri")
+aucqda <-ROCR::performance(predqda, measure="auc")
+paste(round(aucqda@y.values[[1]],6), "QDA AUC degeri")
+```
+
+### ROC eğrisi
+```{r echo=FALSE}
+perfct <-ROCR:: performance( predct, "tpr", "fpr" )
+perfbag <-ROCR:: performance(predbag, "tpr", "fpr")
+perfrf <-ROCR:: performance(predRF, "tpr", "fpr")
+perflr <-ROCR:: performance(predlog, "tpr", "fpr")
+perflda <-ROCR:: performance(predlda, "tpr", "fpr")
+perfqda <-ROCR:: performance(predqda, "tpr", "fpr")
+
+
+
+plot(perfct, col = "firebrick3", lwd = 2, lty = 1)
+plot(perfbag, add = TRUE, col = "aquamarine3", lwd = 2, lty =2)
+plot(perfrf, add=T, col = "black", lwd = 2, lty = 6)
+plot(perflda, add = TRUE, col = "lightpink3", lwd = 2, lty =4)
+plot(perfqda,add=T, col = "burlywood3", lwd = 2, lty =3)
+plot(perflr, add = TRUE, col = "dodgerblue3", lwd = 2, lty=5)
+legend("bottomright", title = "Algoritma - AUC Değeri", legend= c("ct - 0.89", "bag - 0.899", "RF - 0.90", "lda - 0.75", "qda - 0.86", "log - 0.81"), col = c( "firebrick3", "aquamarine3", "black","lightpink3","burlywood3","dodgerblue3"), lty = c(1,2,6,4,3,5), lwd = 2)
+
+
+```
+\textcolor{blue}{AUC miktarının artışı Roc curve çizgisinin altındaki alanının artmasıyla ilişkilidir.
+**EN Çok alana sahip ve AUC değeri fazla olan algoritma Random Forest olmuştur**
+En iyi algoritma olarak Random Forest e karar verilmiştir, test metrikleri incelendikten sonra kesin karar verilecektir}
+
+## 13
+
+### Tablo         
+```{r echo=FALSE}
+preds <- data.frame()
+preds[1,1] <- "treeRings"
+preds[2,1] <- "treeRings"
+preds[1,2] <- "train"
+preds[2,2] <- "test"
+preds[1,3] <- 0.9524 
+preds[2,3] <- 0.9314 
+preds[1,4] <- 0.8866
+preds[2,4] <- 0.8502
+preds[1,5] <- 0.9641
+preds[2,5] <- 0.9475
+
+##############################
+
+preds[3,1] <- "Bagging"
+preds[4,1] <- "Bagging"
+preds[3,2] <- "train"
+preds[4,2] <- "test"
+preds[3,3] <- 1.0000
+preds[4,3] <- 0.9354
+preds[3,4] <- 1.0000
+preds[4,4] <- 0.8454
+preds[3,5] <- 1.0000
+preds[4,5] <- 0.9532
+
+
+#################################
+
+preds[5,1] <- "RanFor"
+preds[6,1] <- "RanFor"
+preds[5,2] <- "train"
+preds[6,2] <- "test"
+preds[5,3] <- 0.9839
+preds[6,3] <- 0.9346
+preds[5,4] <- 0.9615
+preds[6,4] <- 0.8357
+preds[5,5] <- 0.9879
+preds[6,5] <- 0.9542
+
+#################################
+
+preds[7,1] <- "LogReg"
+preds[8,1] <- "LogReg"
+preds[7,2] <- "train"
+preds[8,2] <- "test"
+preds[7,3] <- 0.9138
+preds[8,3] <- 0.8828
+preds[7,4] <- 0.7823
+preds[8,4] <- 0.7150
+preds[7,5] <- 0.9371
+preds[8,5] <- 0.9160
+
+#################################
+
+preds[9,1] <- "LDA"
+preds[10,1] <- "LDA"
+preds[9,2] <- "train"
+preds[10,2] <- "test"
+preds[9,3] <- 0.9011
+preds[10,3] <- 0.8788
+preds[9,4] <- 0.60544
+preds[10,4] <- 0.57971
+preds[9,5] <- 0.95367
+preds[10,5] <- 0.93792
+
+#################################
+
+preds[11,1] <- "QDA"
+preds[12,1] <- "QDA"
+preds[11,2] <- "train"
+preds[12,2] <- "test"
+preds[11,3] <- 0.8579
+preds[12,3] <- 0.8465
+preds[11,4] <- 0.8886
+preds[12,4] <- 0.8947
+preds[11,5] <- 0.8522
+preds[12,5] <- 0.8380
+
+#################################
+
+names(preds) <- c("Algoritma", "TT", "Accuracy_Rate", "Sensivity", "Specificity" )
+
+preds
+
+```
+### ACCURACY & SENCITIVITY & SPECIFICITY
+```{r echo=FALSE}
+preds %>% 
+  ggplot(aes(x= Accuracy_Rate, y= reorder(Algoritma, -Accuracy_Rate))) +
+  geom_line(stat="identity") +
+  geom_point(aes(color=TT), size=4) +
+  theme(legend.position="top") +
+  theme(panel.background = element_rect(fill="white"))+
+  xlab("Accuracy Rate") +
+  ylab("Algoritma")
+
+
+preds %>% 
+  ggplot(aes(x= Sensivity, y= reorder(Algoritma, -Sensivity))) +
+  geom_line(stat="identity") +
+  geom_point(aes(color=TT), size=3) +
+  theme(legend.position="top") +
+  theme(panel.background = element_rect(fill="white"))+
+  xlab("Sensitivity") +
+  ylab("Algoritma")
+
+
+preds %>% 
+  ggplot(aes(x= Specificity, y= reorder(Algoritma, -Specificity))) +
+  geom_line(stat="identity") +
+  geom_point(aes(color=TT), size=3) +
+  theme(legend.position="top") +
+  theme(panel.background = element_rect(fill="white"))+
+  xlab("Specificity") +
+  ylab("Algoritma")
+
+```
+
+- Kırmızı noktalar test setinin performanslarını gösterdikleri için önem arzetmektedir.
+- **Sirasiyla Random Forest, Bagging ve sınıflandırma ağaçları en iyi algoritmalar olarak kabul edilir.**
+\begin{center}\textcolor{red}{bu yüzden tablodan da anlaşıldığı gibi duyarlılık ve doğruluk metriklerinde bagging çok az farkla iyi çıktığına rağmen Random Forest AUC değeri Bagging AUC değerinden fazla idi, buna ek özgüllük metriğine göre de Random Forest bir tık daha iyi sonuç vermektedir, dolayısıyla En iyi algoritma Random Forest ve modelin bu algoritmada Grid Search ile budanmış hali en iyi model dir.
+En iyi Model RF.C2 <- randomForest(Rings~., data = train, mtry= 4, importance= TRUE, nodesize=10,ntree= 220) olarak karar verilmiştir.}\end{center}
+\begin{center}\textcolor{blue}{ Regresyon yöntemlerinin test hata metriklerini Rings değişkeni net bir şekilde kategorik olduğu için Random Forest gibi robust yöntemler yanı sıra incelemeye gerek duyulmamıştır.}\end{center}
